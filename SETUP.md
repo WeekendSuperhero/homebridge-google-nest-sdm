@@ -2,7 +2,7 @@
 
 This guide streamlines the setup process for [homebridge-google-nest-sdm](https://github.com/potmat/homebridge-google-nest-sdm) using a combination of automation scripts and clear manual steps.
 
-**Last Updated:** 2025-12-17  
+**Last Updated:** 2026-09-11  
 **Contributors:** [WeekendSuperhero](https://github.com/WeekendSuperhero)
 
 ## Table of Contents
@@ -143,7 +143,18 @@ gcloud services enable pubsub.googleapis.com
    - User support email: Your email
    - Developer contact email: Your email
 4. Save and continue through all steps
-5. Under **Audience** --> **Test users**, add your Google account email
+5. Under **Audience** --> **Test users**, add your Google account email.
+   Without this, authorization fails with `Error 403: access_denied - can only be
+   accessed by developer-approved testers`.
+6. Under **Audience**, click **PUBLISH APP** and confirm.
+
+> **Publish the app, or the setup stops working after 7 days.** While the consent
+> screen is in Testing with External user type, Google expires refresh tokens
+> after a week. Everything works, then fails with `invalid_grant`, which points
+> nowhere useful. SDM uses a restricted scope; Google's Device Access docs say
+> verification is not required for personal use, and
+> publishing only adds an **Advanced --> Go to (unsafe)** click during
+> authorization, and makes the refresh token permanent.
 
 ### Step 4: Create OAuth 2.0 Credentials
 
@@ -155,17 +166,7 @@ gcloud services enable pubsub.googleapis.com
 6. Click **Create**
 7. **Save the Client ID and Client Secret**
 
-### Step 5: Create Device Access Project
-
-1. Go to [Device Access Console](https://console.nest.google.com/device-access)
-2. Click **+ Create project**
-3. Enter project name
-4. Enter your OAuth Client ID
-5. **Enable events: YES**
-6. Click **Create project**
-7. **Save the Project ID (UUID format)**
-
-### Step 6: Set Up Pub/Sub
+### Step 5: Set Up Pub/Sub
 
 #### Option A: Using gcloud CLI
 
@@ -210,7 +211,24 @@ echo "Subscription ID: projects/$PROJECT_ID/subscriptions/$SUBSCRIPTION_NAME"
 11. Select your topic
 12. Click **Create**
 
-### Step 7: Link Pub/Sub Topic to Device Access
+### Step 6: Create Device Access Project
+
+> The Pub/Sub topic must already exist: the console requires it the moment you
+> tick *Enable events*, and validates it on the spot.
+
+1. Go to [Device Access Console](https://console.nest.google.com/device-access)
+2. Click **+ Create project**
+3. Enter project name
+4. Enter your OAuth Client ID
+5. **Enable events: YES**
+6. Enter the Pub/Sub topic from Step 5: `projects/YOUR-GCP-PROJECT-ID/topics/nest-events`
+7. Click **Create project**
+8. **Save the Project ID (UUID format)**
+
+### Step 7: Confirm the Pub/Sub Topic Link
+
+If Step 6 accepted the topic this is already done; confirm it, and only
+re-enter it if the section is empty.
 
 1. Go to [Device Access Console](https://console.nest.google.com/device-access)
 2. Click on your project
@@ -295,6 +313,11 @@ The response will include your `refresh_token`. **Save this!**
 ---
 
 ## Troubleshooting
+
+> **Already set up and something broke?** Run `./scripts/verify-nest-sdm.sh`
+> against your existing credentials. It is independent of the setup path and
+> checks the pieces that drift after installation — a deleted subscription,
+> changed IAM, a revoked token.
 
 ### Verify Your Setup
 
