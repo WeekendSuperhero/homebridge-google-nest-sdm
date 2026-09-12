@@ -140,9 +140,29 @@ echo "   - App name: Homebridge Nest SDM"
 echo "   - User support email: $ACCOUNT"
 echo "   - Developer contact email: $ACCOUNT"
 echo "5. Click 'Save and Continue' through all steps"
-echo "6. Under Audience -> 'Test users', add your email: $ACCOUNT"
+echo ""
+print_warning "Two settings on this screen break the setup later if missed."
+echo ""
+echo "6. Under Audience -> 'Test users', ADD: $ACCOUNT"
+echo "   Without this the authorization in step 9 ends at:"
+echo "     Error 403: access_denied - can only be accessed by developer-approved testers"
+echo ""
+echo "7. Under Audience, click 'PUBLISH APP' and confirm."
+echo "   While the app is in Testing, Google expires refresh tokens after 7 DAYS."
+echo "   Everything works, then stops a week later with 'invalid_grant'."
+echo "   SDM uses a restricted scope. Verification is not required for personal"
+echo "   use - publishing only adds an 'Advanced -> Go to (unsafe)' click"
+echo "   during authorization, and makes the token permanent."
+echo "   (Internal user type on a Workspace account: neither applies - answer y.)"
 echo ""
 wait_for_user
+
+read -p "Confirm you added $ACCOUNT as a Test user and published the app [y/N]: " CONSENT_OK
+if [[ ! "$CONSENT_OK" =~ ^[Yy]$ ]]; then
+    print_error "Both are required. Re-run once they are set."
+    exit 1
+fi
+print_step "Consent screen confirmed"
 
 print_header "Step 5: Creating OAuth 2.0 Credentials"
 
@@ -160,38 +180,38 @@ echo ""
 wait_for_user
 
 echo ""
-read -p "Enter your OAuth Client ID: " CLIENT_ID
-read -p "Enter your OAuth Client Secret: " CLIENT_SECRET
+# Google now shows only the last four characters of the secret and offers no
+# download after creation, so the JSON handed over at creation time is the only
+# full copy. Reading it avoids a mistyped secret, which surfaces as
+# 'invalid_client' during the token exchange and reads like a code fault.
+CLIENT_JSON=$(ls -t ~/Downloads/client_secret_*.json 2>/dev/null | head -1)
+if [ -n "$CLIENT_JSON" ]; then
+    echo "Found a downloaded client secret file:"
+    echo "  $CLIENT_JSON"
+    read -p "Read the credentials from it? [Y/n]: " USE_JSON
+    if [[ ! "$USE_JSON" =~ ^[Nn]$ ]]; then
+        CLIENT_ID=$(jq -r '.web.client_id // .installed.client_id // empty' "$CLIENT_JSON" 2>/dev/null || true)
+        CLIENT_SECRET=$(jq -r '.web.client_secret // .installed.client_secret // empty' "$CLIENT_JSON" 2>/dev/null || true)
+        [ -n "$CLIENT_ID" ] && print_step "Read client ID $CLIENT_ID from $(basename "$CLIENT_JSON")"
+    fi
+fi
+
+if [ -z "$CLIENT_ID" ]; then
+    read -p "Enter your OAuth Client ID: " CLIENT_ID
+fi
+if [ -z "$CLIENT_SECRET" ]; then
+    read -p "Enter your OAuth Client Secret: " CLIENT_SECRET
+fi
 
 if [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ]; then
     print_error "Client ID and Secret are required!"
+    echo "If the secret was lost, add a SECOND secret on the same client - it does"
+    echo "not invalidate the first - and use the JSON offered at creation."
     exit 1
 fi
 print_step "OAuth credentials captured"
 
-print_header "Step 6: Create Device Access Project"
-
-print_manual "Create your Device Access Project."
-echo ""
-echo "1. Open: https://console.nest.google.com/device-access"
-echo "2. Click '+ Create project'"
-echo "3. Enter project name: Homebridge"
-echo "4. Enter OAuth Client ID: $CLIENT_ID"
-echo "5. Enable events: YES"
-echo "6. Click 'Create project'"
-echo "7. COPY the Project ID (UUID format like: 32c4c2bc-fe0d-461b-b51c-f3885afff2f0)"
-echo ""
-wait_for_user
-
-read -p "Enter your Device Access Project ID (UUID): " SDM_PROJECT_ID
-
-if [ -z "$SDM_PROJECT_ID" ]; then
-    print_error "Device Access Project ID is required!"
-    exit 1
-fi
-print_step "Device Access Project ID captured: $SDM_PROJECT_ID"
-
-print_header "Step 7: Setting up Pub/Sub"
+print_header "Step 6: Setting up Pub/Sub"
 
 TOPIC_FULL_NAME="projects/$PROJECT_ID/topics/$TOPIC_NAME"
 echo "Creating Pub/Sub topic: $TOPIC_NAME"
@@ -220,16 +240,45 @@ gcloud pubsub subscriptions create "$SUBSCRIPTION_NAME" \
 }
 print_step "Subscription created: $SUBSCRIPTION_FULL_NAME"
 
-print_header "Step 8: Link Pub/Sub Topic to Device Access"
+print_header "Step 7: Create Device Access Project"
 
-print_manual "Connect your Pub/Sub topic to Device Access."
+print_manual "Create your Device Access Project."
+echo ""
+echo "1. Open: https://console.nest.google.com/device-access"
+echo "2. Click '+ Create project'"
+echo "3. Enter project name: Homebridge"
+echo "4. Enter OAuth Client ID: $CLIENT_ID"
+echo "5. Enable events: YES"
+echo "6. Paste this Pub/Sub topic when prompted (required, validated on the spot):"
+echo ""
+echo "      $TOPIC_FULL_NAME"
+echo ""
+echo "7. Click 'Create project'"
+echo "8. COPY the Project ID (UUID format like: 32c4c2bc-fe0d-461b-b51c-f3885afff2f0)"
+echo ""
+wait_for_user
+
+read -p "Enter your Device Access Project ID (UUID): " SDM_PROJECT_ID
+
+if [ -z "$SDM_PROJECT_ID" ]; then
+    print_error "Device Access Project ID is required!"
+    exit 1
+fi
+print_step "Device Access Project ID captured: $SDM_PROJECT_ID"
+
+
+print_header "Step 8: Confirm Pub/Sub Topic Link"
+
+print_manual "Confirm the topic is linked."
 echo ""
 echo "1. Open: https://console.nest.google.com/device-access"
 echo "2. Click on your project"
-echo "3. Find 'Pub/Sub topic' section"
-echo "4. Click '...' → 'Enable events with PubSub topic'"
-echo "5. Enter topic: $TOPIC_FULL_NAME"
-echo "6. Click 'Add & Validate'"
+echo "3. The 'Pub/Sub topic' section should already show:"
+echo ""
+echo "      $TOPIC_FULL_NAME"
+echo ""
+echo "4. If it is empty, click '...' → 'Enable events with PubSub topic',"
+echo "   enter the topic above, and click 'Add & Validate'"
 echo ""
 wait_for_user
 print_step "Pub/Sub topic linked"
@@ -277,7 +326,24 @@ ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token // empty')
 
 if [ -z "$REFRESH_TOKEN" ]; then
     print_error "Failed to get refresh token!"
-    echo "Response: $TOKEN_RESPONSE"
+    # Print only the error fields. This branch also fires when Google returns a
+    # valid access_token and no refresh_token (re-authorising a client that
+    # already has a grant), so echoing the whole response would put a live
+    # credential on screen in the case most likely to be pasted into an issue.
+    if [ -z "$TOKEN_RESPONSE" ]; then
+        echo "Empty response from the token endpoint (network or proxy problem)."
+    else
+        echo "Error: $(echo "$TOKEN_RESPONSE" | jq -r '.error // "unknown"' 2>/dev/null || echo "unparsable response")"
+        echo "Description: $(echo "$TOKEN_RESPONSE" | jq -r '.error_description // "none"' 2>/dev/null || echo "none")"
+    fi
+    if [ -n "$ACCESS_TOKEN" ]; then
+        echo ""
+        print_warning "Google returned an access token but no refresh token."
+        echo "The URL above sets prompt=consent, which normally forces one even for"
+        echo "a client that already has a grant. Revoke the grant at"
+        echo "https://myaccount.google.com/permissions, then re-run and open the URL"
+        echo "exactly as printed."
+    fi
     exit 1
 fi
 print_step "Refresh token obtained successfully!"
@@ -329,7 +395,7 @@ echo "Your Homebridge configuration values:"
 echo ""
 echo "  Platform:        homebridge-google-nest-sdm"
 echo "  Client ID:       $CLIENT_ID"
-echo "  Client Secret:   $CLIENT_SECRET"
+echo "  Client Secret:   ${CLIENT_SECRET:0:6}... (full value in $OUTPUT_FILE)"
 echo "  Project ID:      $SDM_PROJECT_ID"
 echo "  Refresh Token:   ${REFRESH_TOKEN:0:20}..."
 echo "  Subscription ID: $SUBSCRIPTION_FULL_NAME"
